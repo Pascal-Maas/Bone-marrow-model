@@ -2,7 +2,8 @@ library(dplyr)
 library(Seurat)
 
 # Load the PBMC dataset
-pbmc.data <- get(load("Data/SRA779509_SRS3805245.sparse.RData"))
+input <- "Data/SRA779509_SRS3805245.sparse.RData"
+pbmc.data <- get(load(input))
 # Initialize the Seurat object with the raw (non-normalized data).
 pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
 
@@ -27,8 +28,8 @@ CombinePlots(plots = list(plot1, plot2))
 
 # Create a subset of the original set. Only take:
 # cells with > 200 unique RNA molecules, (leaked out of broken membrane)
-# cells with < 2500 unique RNA molecules, done to filter doubles
-# cells with smaller than 5 percent mitochondria RNA (leaked out of broken membrane)
+# cells with < 2500 unique RNA molecules, done to filter doubles (will result in too many unique RNAs)
+# cells with < 5 percent mitochondria RNA (leaked out of broken membrane)
 pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5) 
 
 # Scale the counts by 10.000, then normalize using a log transformation
@@ -36,7 +37,7 @@ pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor 
 
 # Standardize the data by calculating the Z-score ((val - avg) / std dev). 
 # Outliers are clipped by sqrt(N), where N = amount of cells
-# Calculate the variance of each gene across all cells. This measure is done to controll for the mean expression.
+# Calculate the variance of each gene across all cells. This measure is done to control for the mean expression.
 # Return the top 2.000 genes with the highest standardized variance
 pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
 
@@ -78,5 +79,10 @@ ElbowPlot(pbmc, ndims = 40)
 
 
 # Select PCA data for modelling:
-loadings <- pbmc[["pca"]]@feature.loadings # Gene loadings
-loadings[,1:12] # Replace '1:8' with 1:N' where N = number of PCs wanted.
+embeddings <- pbmc[["pca"]]@cell.embeddings # cells with PCs
+head(embeddings[,1:5]) # Replace '1:8' with 1:N' where N = number of PCs wanted.
+
+# TODO:
+# Combine several matrices together of multiple patients
+# Find Golden truth of cells, so an X matrix and y vector can be created for modelling.
+# Create a Markdown document that will create plots made. 

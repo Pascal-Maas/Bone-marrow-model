@@ -49,6 +49,9 @@ colnames(B) = letters[3:5]
 misA = colnames(B)[!colnames(B) %in% colnames(A)]
 misB = colnames(A)[!colnames(A) %in% colnames(B)]
 
+misA
+misB
+
 misAl = as.vector(numeric(length(misA)), "list")
 names(misAl) = misA
 misBl = as.vector(numeric(length(misB)), "list")
