@@ -1,0 +1,153 @@
+---
+title: "Seurat Output"
+author: "Pascal Maas"
+date: "March 4, 2020"
+output: html_document
+geometry: margin=1cm
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preprocessing
+This document is a test document for the Seurat pipeline. It will create several plots during this process. Documentation can be found at: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
+
+For this test document, the data **SRA779509_SRS3805245.sparse.RData** was used. 
+
+```{r Starting, include=FALSE}
+
+library(dplyr)
+library(Seurat)
+library(MGFR)
+library(knitr)
+# Load the PBMC dataset
+input <- "../Data/SRA779509_SRS3805245.sparse.RData" 
+pbmc.data <- get(load(input))
+
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "Test-project", min.cells = 3, min.features = 200)
+
+
+# Calculates the percentage of counts coming from Mitochondria genes (starting with MT), per cell
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+
+```
+
+### Quality control
+Three plots are made to provide insight into the data. Each plot shows the individual cells on the x-axis. The first plots shows the number of unique RNA molecules per cell. The second shows the total RNA molecules counted. The last plot shows the percentage of mitochondrial RNA found. 
+
+```{r echo=FALSE}
+# Shows the QC data when loading SeuratObject. 
+# nCount = total RNA molecules
+# nFeature = Number of unique RNA molecules
+# percent.mt = Percentage mitochondria (as previously calculated)
+# Shows the vignette plot of these metdata. The red area shows the spread
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+```
+
+Plotting a scatter plot of these features against each other per cell, should show a weak correlation between the total number of RNA molecules and percentage mitochondrial RNA. This is because large amounts of mitochondrial RNA indicates a leaked or broken membrane during sequencing. 
+
+There should be a strong correlation between the total number of RNAs and the number of unique RNAs. 
+
+```{r echo=FALSE, warning=FALSE}
+# These plots show the relationship between the metadata using a scatterplot
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") # Weak negative correlation
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") # Strong positive correlation
+CombinePlots(plots = list(plot1, plot2))
+```
+
+
+```{r echo=FALSE}
+# Create a subset of the original set. Only take:
+# cells with > 200 unique RNA molecules, (leaked out of broken membrane)
+# cells with < 2500 unique RNA molecules, done to filter doubles (will result in too many unique RNAs)
+# cells with < 5 percent mitochondria RNA (leaked out of broken membrane)
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5) 
+
+# Scale the counts by 10.000, then normalize using a log transformation
+pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor = 10000)
+
+# Standardize the data by calculating the Z-score ((val - avg) / std dev). 
+# Outliers are clipped by sqrt(N), where N = amount of cells
+# Calculate the variance of each gene across all cells. This measure is done to control for the mean expression.
+# Return the top 2.000 genes with the highest standardized variance
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(pbmc), 10)
+```
+
+### Subsetting and normalizing
+A subset of the data is taken by the following rules: `200 > nFeatures < 2500 & % mitochondria < 5` Afterwards, the data is normalized by scaling and a log transformation. This scaling is needed because of the relatively low counts of single cell RNA sequencing versus regular RNA-seq. 
+
+In order to find genes that are overexpressed, the data is standardized using: $$ z = \frac{x_i - \bar{x}}{\sigma} $$ Outliers are clipped by the square root of $N$ where $N$ equals the amount of cells. Next, the variance of each gene is calculated across all cells, which is done to correct for the mean expression. The top 2000 genes with the highest standardized variance are most determining for the dataset. These are colored in red in the plot below. The 10 genes with the highest variance are labeled.
+
+```{r echo=FALSE, warning=FALSE}
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(pbmc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE, xnudge = 0, ynudge = 0)
+plot(plot2)
+```
+
+### Dimensionality reduction
+To identify which combination of genes explain the most variation in the data, a Principle Component Analysis (PCA) is executed. This procedure performs a linear transformation to replace axes in such a way that each axis explains the most variation possible. In order to do this, the data is first scaled before performing a PCA. This is done by mean-centering the data to 0. 
+
+The PCA is performed with the 2000 genes that had the highest variance. This is done to speed up the process. Including all genes wouldn't have much effect on the eventual principle components.
+
+The first plot shows the 1st and 2nd principle components plotted. 
+
+
+```{r echo=FALSE, warning=FALSE}
+# Scale the data for PCA, but only select the genes that had a high variance.
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes, verbose = F)
+
+# Performs a PCA on the scaled data. It will show the first 5 dimensions
+pbmc <- RunPCA(pbmc, features = VariableFeatures(pbmc), verbose = F)
+
+#print(pbmc[["pca"]], dims = 1:5, nfeatures = 5)
+DimPlot(pbmc, reduction = "pca") # Plot a regular pca plot of the first 2 components
+
+# Other plots possible:
+
+# VizDimLoadings(pbmc, dims = 1:2, reduction = "pca") # Show the loadings of the PCA. 
+# DimHeatmap(pbmc, dims = 1, cells = 500, balanced = TRUE) # Heatmap of up versus down regulated
+```
+
+### Determining optimal number of principle components
+To determine the optimal number of principle components, permutation tests are executed. These randomly select a principle components with 1% of the data to calculate the amount of variation explained. This will result in a distribution of which the addition of each prinicple component can be statistically computed. This is process is called `JackStraw` and produces the plot below. The dashed line represents randomly expected significance, which can be used as a cutoff threshold for the number of principle components to pick.
+
+``` {r echo=FALSE, warning=FALSE}
+# Permutation of Data, sampling 1% to create PCA's. 
+# Compares the PCA scores for the sampled genes to the observed PCA to calculate statistical significance 
+pbmc <- JackStraw(pbmc, num.replicate = 100, dims = 40)
+pbmc <- ScoreJackStraw(pbmc, dims = 1:40, do.plot = T)
+```
+
+### Clustering
+In order to identify groups of cells with a similar expression pattern, cells are clustered based on Euclidean distance in the PCA space. The Louvain modularity is used to determine communities in the graph. This is a greedy algorithm that measures the density of edges inside communities to edges outside communities. By optimizing for small communities, it is greedy of nature.
+
+These clusters can be plotted in a 2D plot using t-SNE (t-distributed Stochastic Neighbour Embedding). 
+
+``` {r echo=FALSE, warning=FALSE}
+pbmc <- FindNeighbors(pbmc, dims = 1:20, verbose = F)
+pbmc <- FindClusters(pbmc, resolution = 0.5, verbose = F)
+pbmc <- RunTSNE(pbmc, dims = 1:20)
+DimPlot(pbmc, reduction = "tsne")
+```
+
+### Differential Expression
+Comparing all markers between the clusters allows for the determination of markers per cell type. 
+These markers can then be used manually to determine the cell type.
+
+``` {r echo=FALSE, warning=FALSE, results='asis'}
+
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+pbmc.markers <- FindAllMarkers(pbmc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, verbose = F)
+df <- pbmc.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+kable(df)
+```
+

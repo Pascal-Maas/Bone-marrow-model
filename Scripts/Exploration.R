@@ -1,21 +1,67 @@
 setwd("Data/")
 
-get_list_of_matrices <- function(){
+library(Matrix)
+library(Matrix.utils)
+library(VennDiagram)
+library(corrplot)
+
+#' @description This function will combine matrices from files into a single matrix.
+#' This is done by an inner join to only selected the genes that are shared between 
+#' the matrices.
+get_combined_matrices <- function(){
     data_files <- list.files()
-    return(lapply(data_files, function(file){
-        return(t(get(load(file))))
-    }))
+    M <- Matrix()
+    sapply(data_files, function(file){
+        m <- head(get(load(file)), 100) # head for testing
+        if (nrow(M) <= 1){
+            M <<- m 
+        } else {
+            # Inner join to only select the shared genes
+            M <<- join.Matrix(M, m, rownames(M), rownames(m), all.x = F, all.y = F) 
+        }
+    })
+    return(M)
 }
 
-l <- get_list_of_matrices()
+#' @description This function will create a plot where the differences between the datasets
+#' are plotted as a fraction. This is done in order to determine if there are samples that contain less 
+#' genes than others and if they should be removed in order to retain the number of genes.
+correlation_plot_genes <- function(omit = c()){
+    if (length(omit) > 0){
+        data_files <- list.files()[-omit]
+    } else {
+        data_files <- list.files()
+    }
+    genes <- c()
+    list_of_genes <- lapply(data_files, function(file){
+        g <- rownames(get(load(file)))
+        if (length(genes) == 0){
+            genes <<- g
+        } else {
+            genes <<- intersect(genes, g)
+        }
+        return(g)
+    })
+    M <- as.matrix(sapply(list_of_genes, function(vec1){
+        return(sapply(list_of_genes, function(vec2){
+            return(length(setdiff(vec1, vec2)) / min(length(vec1), length(vec2)))
+        }))
+    }))
+    corrplot(M, method = "square", title = paste("Shared genes:", length(genes)), mar=c(10,0,10,0))
+    return(list("proportion" = M, "genes" = list_of_genes))
+}
 
 
-m1 <- get(load('SRA779509_SRS3805255.sparse.RData'))
-typeof(m1)
+#l <- get_combined_matrices()
 
-m2 <- get(load('SRA779509_SRS3805247.sparse.RData'))
-dplyr::bind_rows(m1, m2)
-rbind2(m1, m2, fill=T)
+par(mfrow=c(1,2))
+correlation_plot_genes()
+obj <- correlation_plot_genes(omit = c(5, 17, 20))
+
+m1 <- head(get(load('SRA779509_SRS3805255.sparse.RData')), 20)
+colnames(m1) <- paste0("sample_1_", colnames(m1))
+
+m2 <- head(get(load('SRA779509_SRS3805247.sparse.RData')), 20)
 
 # Columns are cells (tags for mRNA)
 # Rows are genes
@@ -26,41 +72,3 @@ a <- unlist(lapply(names, function(s){ # get Only ENGSG00....
 }))
 
 summary(m1[which(startsWith(a, "ENSG00000010610") == T),]) #CD4
-
-# TODO:
-# Transpose so cells are horizontal, genes are vertical
-# Determine the labels of each cell (by overexpression of CD4, CD8 etc..? Or maybe other way?)
-# Find a way to combine cells from different patients (averaging maybe? Concatenating?)
-# Explore which genes cause most variation (PCA)
-# Perform feature selection
-# Determine 
-# Make model
-# Combine into pipeline
-
-
-# dummy data
-set.seed(3344)
-A = Matrix(matrix(rbinom(16, 2, 0.2), 4))
-colnames(A)=letters[1:4]
-B = Matrix(matrix(rbinom(9, 2, 0.2), 3))
-colnames(B) = letters[3:5]
-
-# finding what's missing
-misA = colnames(B)[!colnames(B) %in% colnames(A)]
-misB = colnames(A)[!colnames(A) %in% colnames(B)]
-
-misA
-misB
-
-misAl = as.vector(numeric(length(misA)), "list")
-names(misAl) = misA
-misBl = as.vector(numeric(length(misB)), "list")
-names(misBl) = misB
-
-## adding missing columns to initial matrices
-An = do.call(cbind, c(A, misAl))
-Bn = do.call(cbind, c(B, misBl))[,colnames(An)]
-
-# final bind
-rbind(An, Bn)
-

@@ -1,6 +1,6 @@
 library(dplyr)
 library(Seurat)
-
+library(MGFR)
 # Load the PBMC dataset
 input <- "Data/SRA779509_SRS3805245.sparse.RData"
 pbmc.data <- get(load(input))
@@ -58,6 +58,8 @@ pbmc <- ScaleData(pbmc, features = all.genes)
 
 # Performs a PCA on the scaled data. It will show the first 5 dimensions
 pbmc <- RunPCA(pbmc, features = VariableFeatures(pbmc))
+
+
 print(pbmc[["pca"]], dims = 1:5, nfeatures = 5)
 DimPlot(pbmc, reduction = "pca") # Plot a regular pca plot of the first 2 components
 VizDimLoadings(pbmc, dims = 1:2, reduction = "pca") # Show the loadings of the PCA. 
@@ -66,7 +68,8 @@ DimHeatmap(pbmc, dims = 1, cells = 500, balanced = TRUE) # Heatmap of up versus 
 # Permutation of Data, sampling 1% to create PCA's. 
 # Compares the PCA scores for the sampled genes to the observed PCA to calculate statistical significance 
 pbmc <- JackStraw(pbmc, num.replicate = 100, dims = 40)
-pbmc <- ScoreJackStraw(pbmc, dims = 1:40)
+pbmc <- ScoreJackStraw(pbmc, dims = 1:40, do.plot = T)
+
 
 # Get p-values per Principle Component
 pbmc[["pca"]]@jackstraw@overall.p.values
@@ -80,9 +83,55 @@ ElbowPlot(pbmc, ndims = 40)
 
 # Select PCA data for modelling:
 embeddings <- pbmc[["pca"]]@cell.embeddings # cells with PCs
+
+
 head(embeddings[,1:5]) # Replace '1:8' with 1:N' where N = number of PCs wanted.
 
 # TODO:
 # Combine several matrices together of multiple patients
 # Find Golden truth of cells, so an X matrix and y vector can be created for modelling.
 # Create a Markdown document that will create plots made. 
+
+# Constructs a K-NN graph based on Euclidean distance in the PCA space. Edges are corrected 
+# By using Jaccard similarity. 
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
+
+# Cluster are found using the Louvain modularity. This is a greedy algorithm to find communities in large graphs 
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+
+pbmc <- RunUMAP(pbmc, dims = 1:10)
+DimPlot(pbmc, reduction = "umap")
+
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+# Finds markers, but clusters still need to be identified per cell type -> MGFR
+# Need a matrix of genes (rows) x clusters (columns)
+pbmc.markers <- FindAllMarkers(pbmc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+pbmc.markers
+
+
+# Show summary of markers per cluster, top 2 by average log fold change
+df <- pbmc.markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_logFC)
+df
+levels(pbmc.markers[["cluster"]])
+
+# MGFR example set
+data(ref.mat)
+rownames(ref.mat)
+colnames(ref.mat)
+res <- getMarkerGenes.rnaseq(ref.mat, class.vec=colnames(ref.mat), samples2compare="all", annotate=TRUE, gene.ids.type="ensembl", score.cutoff=1)
+
+
+
+dat <- pbmc[["RNA"]]@scale.data
+names <- strsplit(rownames(dat), "-")
+a <- unlist(lapply(names, function(s){ # get Only ENSGG00....
+    return(s[length(s)])
+}))
+names <- strsplit(unlist(a), "\\.")
+a <- unlist(lapply(names, function(s){ # get Only ENSGG00....
+    return(s[1])
+}))
+rownames(dat) <- a
+
+
